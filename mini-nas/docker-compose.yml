@@ -1,0 +1,73 @@
+# Mini-NAS Docker Compose
+# Plug-and-play setup for AI agent memory backbone
+# Author: Erki Unn (forestsense.ai) + Eirik (Cowork agent)
+# Usage: copy .env.example to .env, edit values, run: docker compose up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: forestsense-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-forestsense}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forestsense_dev_2026}
+      POSTGRES_DB: ${POSTGRES_DB:-forestsense}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ${DATA_PATH:-./data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-forestsense}"]
+      interval: 10s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: forestsense-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-forestsense_dev_2026}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      - postgres
+
+  sync-supabase:
+    image: python:3.13-alpine
+    container_name: forestsense-sync-supabase
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SUPABASE_URL: ${SUPABASE_URL}
+      SUPABASE_KEY: ${SUPABASE_KEY}
+      SYNC_INTERVAL: ${SUPABASE_SYNC_INTERVAL:-900}
+      LOCAL_DB_USER: ${POSTGRES_USER:-forestsense}
+      LOCAL_DB_PASSWORD: ${POSTGRES_PASSWORD:-forestsense_dev_2026}
+      LOCAL_DB_NAME: ${POSTGRES_DB:-forestsense}
+    volumes:
+      - ${SCRIPTS_PATH:-./scripts}:/scripts:ro
+    command: sh -c "apk add --no-cache build-base postgresql-dev libffi-dev && pip install --no-cache-dir psycopg2-binary requests && python /scripts/sync_supabase.py"
+
+  sync-memory-files:
+    image: python:3.13-alpine
+    container_name: forestsense-sync-memory-files
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      EIRIK_ROOT: /eirik
+      SYNC_INTERVAL: ${MEMORY_SYNC_INTERVAL:-3600}
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-1048576}
+      LOCAL_DB_USER: ${POSTGRES_USER:-forestsense}
+      LOCAL_DB_PASSWORD: ${POSTGRES_PASSWORD:-forestsense_dev_2026}
+      LOCAL_DB_NAME: ${POSTGRES_DB:-forestsense}
+    volumes:
+      - ${SCRIPTS_PATH:-./scripts}:/scripts:ro
+      - ${EIRIK_PATH}:/eirik:ro
+    command: sh -c "apk add --no-cache build-base postgresql-dev libffi-dev && pip install --no-cache-dir psycopg2-binary && python /scripts/sync_memory_files.py"
